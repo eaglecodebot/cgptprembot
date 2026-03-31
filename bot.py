@@ -125,8 +125,6 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("⚠️ No se encontró ningún código. Por favor, intenta reenviar el código.", parse_mode="Markdown")
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
     except Exception as e:
         logger.error("Error fetching email: %s", e)
         await update.message.reply_text("⚠️ Ocurrió un error al obtener el correo. Por favor, inténtalo más tarde.")
