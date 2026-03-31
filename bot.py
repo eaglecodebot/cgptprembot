@@ -97,7 +97,7 @@ STRINGS = {
         "help_text":                (
             "📖 *Available Commands*\n\n"
             "/start — Register and start using the bot\n"
-            "/code `<email>` — Get the latest 6-digit code sent to that email\n\n"
+            "/code `<email>` — Get the latest code sent to that email\n\n"
             "_Example:_ `/code you@domain.com`\n\n"
             "If the email hasn't been registered by an admin, you'll get an error."
         ),
@@ -160,7 +160,7 @@ STRINGS = {
         "help_text":                (
             "📖 *Comandos Disponibles*\n\n"
             "/start — Regístrate y empieza a usar el bot\n"
-            "/code `<correo>` — Obtén el último código de 6 dígitos enviado a ese correo\n\n"
+            "/code `<correo>` — Obtén el último código de enviado a ese correo\n\n"
             "_Ejemplo:_ `/code tu@dominio.com`\n\n"
             "Si el correo no ha sido registrado por un administrador, recibirás un error."
         ),
