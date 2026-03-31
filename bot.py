@@ -18,7 +18,6 @@ from mail_client import fetch_latest_email_for_address
 load_dotenv()
 
 logging.basicConfig(
-
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
@@ -97,7 +96,7 @@ STRINGS = {
         "help_text":                (
             "📖 *Available Commands*\n\n"
             "/start — Register and start using the bot\n"
-            "/code `<email>` — Get the latest code sent to that email\n\n"
+            "/code `<email>` — Get the latest 6-digit code sent to that email\n\n"
             "_Example:_ `/code you@domain.com`\n\n"
             "If the email hasn't been registered by an admin, you'll get an error."
         ),
@@ -160,7 +159,7 @@ STRINGS = {
         "help_text":                (
             "📖 *Comandos Disponibles*\n\n"
             "/start — Regístrate y empieza a usar el bot\n"
-            "/code `<correo>` — Obtén el último código de enviado a ese correo\n\n"
+            "/code `<correo>` — Obtén el último código de 6 dígitos enviado a ese correo\n\n"
             "_Ejemplo:_ `/code tu@dominio.com`\n\n"
             "Si el correo no ha sido registrado por un administrador, recibirás un error."
         ),
@@ -502,7 +501,7 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     if not is_admin(uid):
-        await query.answer(STRINGS["en"]["admin_only"], show_alert=True)
+        await query.answer(t(uid, "admin_only"), show_alert=True)
         return
 
     if data.startswith("mails_page_"):
