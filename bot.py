@@ -120,10 +120,10 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code_found = extract_code(result["body"])
 
         if code_found:
-    await update.message.reply_text(f"✅ *Código:* `{code_found}`", parse_mode="Markdown")
-    await update.message.reply_text("🔄 If the code doesn't work, try resending the email and run the command again.", parse_mode="Markdown")
-else:
-    await update.message.reply_text("⚠️ No se encontró ningún código. Por favor, intenta reenviar el código.", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ *Código:* `{code_found}`", parse_mode="Markdown")
+            await update.message.reply_text("🔄 If the code doesn't work, try resending the email and run the command again.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("⚠️ No se encontró ningún código. Por favor, intenta reenviar el código.", parse_mode="Markdown")
 
         await update.message.reply_text(msg, parse_mode="Markdown")
 
