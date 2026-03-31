@@ -37,8 +37,8 @@ except Exception as e:
 
 
 def extract_code(body: str):
-    """Extract a 4-digit code from the email body."""
-    match = re.search(r'\b(\d{4})\b', body)
+    """Extract a 6-digit code from the email body."""
+    match = re.search(r'\b(\d{6})\b', body)
     return match.group(1) if match else None
 
 
@@ -455,7 +455,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📖 *Comandos Disponibles*\n\n"
         "/start — Regístrate y empieza a usar el bot\n"
-        "/code `<correo>` — Obtén el último código de 4 dígitos enviado a ese correo\n\n"
+        "/code `<correo>` — Obtén el último código de 6 dígitos enviado a ese correo\n\n"
         "_Ejemplo:_ `/code tu@dominio.com`\n\n"
         "Si el correo no ha sido registrado por un administrador, recibirás un error."
     )
