@@ -61,8 +61,8 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
     imap_user = imap_user or IMAP_USER
     imap_pass = imap_pass or IMAP_PASS
     """
-    Connect to the specific Outlook mailbox using provided credentials
-    and return the latest email from ALLOWED_SENDER.
+    Connect to the IMAP mailbox and return the latest email from ALLOWED_SENDER
+    that was sent TO target_email specifically.
     """
     target_email = target_email.lower().strip()
 
@@ -70,18 +70,31 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
         mail.login(imap_user, imap_pass)
         mail.select(IMAP_MAILBOX, readonly=True)
 
-        status, data = mail.search(None, f'FROM "{ALLOWED_SENDER}"')
+        # Search by both FROM sender and TO recipient
+        status, data = mail.search(None, f'FROM "{ALLOWED_SENDER}" TO "{target_email}"')
         if status == "OK" and data[0]:
             uids = data[0].split()
         else:
             return None
 
+        # Walk from most recent backwards, verify TO header matches
         for uid in reversed(uids):
             status, msg_data = mail.fetch(uid, "(RFC822)")
             if status != "OK":
                 continue
 
             msg = email.message_from_bytes(msg_data[0][1])
+
+            # Double-check all recipient headers to be sure
+            recipients = []
+            for header in ("To", "Cc", "Delivered-To", "X-Original-To"):
+                val = msg.get(header, "")
+                if val:
+                    recipients.append(val.lower())
+            combined = " ".join(recipients)
+
+            if target_email not in combined:
+                continue
 
             return {
                 "sender":  _decode_str(msg.get("From", "")),
