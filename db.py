@@ -85,6 +85,19 @@ class Database:
             upsert=True,
         )
 
+    def get_user_language(self, telegram_id: int) -> str:
+        user = self.users.find_one({"telegram_id": telegram_id})
+        if user:
+            return user.get("language", "es")
+        return "es"
+
+    def set_user_language(self, telegram_id: int, language: str):
+        self.users.update_one(
+            {"telegram_id": telegram_id},
+            {"$set": {"language": language}},
+            upsert=True,
+        )
+
     # ─────────────────────────────────────────────
     # Email registry helpers
     # ─────────────────────────────────────────────
