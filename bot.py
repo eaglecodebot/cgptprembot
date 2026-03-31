@@ -24,12 +24,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-db = Database()
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set in the environment / .env file")
+
+try:
+    db = Database()
+    logger.info("Database connection established.")
+except Exception as e:
+    logger.critical("Failed to connect to the database: %s", e)
+    raise
 
 
 def extract_code(body: str):
-    """Extract a 6-digit code from the email body."""
-    match = re.search(r'\b(\d{6})\b', body)
+    """Extract a 4-digit code from the email body."""
+    match = re.search(r'\b(\d{4})\b', body)
     return match.group(1) if match else None
 
 
@@ -46,6 +55,8 @@ def is_blocked(user_id: int) -> bool:
 
 
 async def guard(update: Update) -> bool:
+    if not update.effective_user or not update.message:
+        return True
     uid = update.effective_user.id
     if is_blocked(uid):
         await update.message.reply_text("🚫 Estás bloqueado y no puedes usar este bot.")
@@ -125,6 +136,8 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────
 
 async def admin_only(update: Update) -> bool:
+    if not update.effective_user or not update.message:
+        return True
     if await guard(update):
         return True
     if not is_admin(update.effective_user.id):
@@ -442,7 +455,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📖 *Comandos Disponibles*\n\n"
         "/start — Regístrate y empieza a usar el bot\n"
-        "/code `<correo>` — Obtén el último código de 6 dígitos enviado a ese correo\n\n"
+        "/code `<correo>` — Obtén el último código de 4 dígitos enviado a ese correo\n\n"
         "_Ejemplo:_ `/code tu@dominio.com`\n\n"
         "Si el correo no ha sido registrado por un administrador, recibirás un error."
     )
@@ -458,6 +471,10 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────
 
 def main():
+    if not BOT_TOKEN:
+        logger.critical("BOT_TOKEN is missing. Exiting.")
+        return
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # User
@@ -483,7 +500,11 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
     logger.info("Bot is running…")
-    app.run_polling()
+    try:
+        app.run_polling()
+    except Exception as e:
+        logger.critical("Bot crashed: %s", e)
+        raise
 
 
 if __name__ == "__main__":
