@@ -64,7 +64,7 @@ STRINGS = {
         "listmails_empty":          "📭 No email addresses registered yet.",
         "listmails_header":         "📋 *Registered Emails*\n📊 Total: *{total}* emails\n\nPage {page}/{total_pages}:\n\n",
         "listusers_empty":          "No users yet.",
-        "listusers_header":         "👥 *All Users*\n📊 Total: *{total}* users\n🟢 Active last 30 days: *{active}*\n\nPage {page}/{total_pages}:\n\n",
+        "listusers_header":         "👥 <b>All Users</b>\n📊 Total: <b>{total}</b> users\n🟢 Active last 30 days: <b>{active}</b>\n\nPage {page}/{total_pages}:\n\n",
         "user_blocked_status":      "🚫 blocked",
         "user_active_status":       "✅ active",
         "blockuser_usage":          "Usage: /blockuser <telegram_id>",
@@ -127,7 +127,7 @@ STRINGS = {
         "listmails_empty":          "📭 Aún no hay direcciones de correo registradas.",
         "listmails_header":         "📋 *Correos registrados*\n📊 Total: *{total}* correos\n\nPágina {page}/{total_pages}:\n\n",
         "listusers_empty":          "Aún no hay usuarios.",
-        "listusers_header":         "👥 *Todos los usuarios*\n📊 Total: *{total}* usuarios\n🟢 Activos últimos 30 días: *{active}*\n\nPágina {page}/{total_pages}:\n\n",
+        "listusers_header":         "👥 <b>Todos los usuarios</b>\n📊 Total: <b>{total}</b> usuarios\n🟢 Activos últimos 30 días: <b>{active}</b>\n\nPágina {page}/{total_pages}:\n\n",
         "user_blocked_status":      "🚫 bloqueado",
         "user_active_status":       "✅ activo",
         "blockuser_usage":          "Uso: /blockuser <telegram_id>",
@@ -382,7 +382,8 @@ async def send_users_page(message, page: int, uid: int):
     lines = []
     for i, u in enumerate(users):
         status = t(uid, "user_blocked_status") if u.get("blocked") else t(uid, "user_active_status")
-        lines.append(f"{i + 1 + page * PAGE_SIZE}. `{u['telegram_id']}` @{u.get('username', '?')} — {status}")
+        uname = (u.get("username") or "?").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(f"{i + 1 + page * PAGE_SIZE}. <code>{u['telegram_id']}</code> @{uname} — {status}")
 
     text = t(uid, "listusers_header", total=total, active=active, page=page+1, total_pages=total_pages) + "\n".join(lines)
 
@@ -393,7 +394,7 @@ async def send_users_page(message, page: int, uid: int):
         buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"users_page_{page + 1}"))
 
     keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
-    await message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def blockuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -537,8 +538,8 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         lines = []
         for i, u in enumerate(users):
             status = t(uid, "user_blocked_status") if u.get("blocked") else t(uid, "user_active_status")
-            uname = escape_md(u.get("username") or "?")
-            lines.append(f"{i + 1 + page * PAGE_SIZE}. `{u['telegram_id']}` @{uname} — {status}")
+            uname = (u.get("username") or "?").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(f"{i + 1 + page * PAGE_SIZE}. <code>{u['telegram_id']}</code> @{uname} — {status}")
         text = t(uid, "listusers_header", total=total, active=active, page=page+1, total_pages=total_pages) + "\n".join(lines)
         buttons = []
         if page > 0:
@@ -546,7 +547,7 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if (page + 1) < total_pages:
             buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"users_page_{page + 1}"))
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 # ─────────────────────────────────────────────
