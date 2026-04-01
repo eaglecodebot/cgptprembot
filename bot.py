@@ -69,14 +69,14 @@ STRINGS = {
         "user_active_status":       "✅ active",
         "blockuser_usage":          "Usage: /blockuser <telegram_id>",
         "blockuser_invalid_id":     "❌ Invalid Telegram ID.",
-        "blockuser_done":           "🚫 User `{uid}` has been blocked.",
+        "blockuser_done":           "🚫 User `{target_id}` has been blocked.",
         "unblockuser_usage":        "Usage: /unblockuser <telegram_id>",
         "unblockuser_invalid_id":   "❌ Invalid Telegram ID.",
-        "unblockuser_done":         "✅ User `{uid}` has been unblocked.",
+        "unblockuser_done":         "✅ User `{target_id}` has been unblocked.",
         "requestlogs_usage":        "Usage: /requestlogs `<telegram_id>`\n\nExample: `/requestlogs 123456789`",
         "requestlogs_invalid_id":   "❌ Invalid Telegram ID.",
-        "requestlogs_empty":        "📭 User `{uid}` has made no requests.",
-        "requestlogs_header":       "📋 *Requests by user* `{uid}`\n📊 Total requests: *{total}*\n\n",
+        "requestlogs_empty":        "📭 User `{user_id}` has made no requests.",
+        "requestlogs_header":       "📋 *Requests by user* `{user_id}`\n📊 Total requests: *{total}*\n\n",
         "requestlogs_row":          "{i}. `{email}`\n   🔁 {count} requests — last: {last}",
         "rankings_empty":           "📭 No request data yet.",
         "rankings_top":             "🏆 *User Rankings*\n\n👑 *Most active:* `{tid}` @{username} with *{total}* requests\n\n",
@@ -132,14 +132,14 @@ STRINGS = {
         "user_active_status":       "✅ activo",
         "blockuser_usage":          "Uso: /blockuser <telegram_id>",
         "blockuser_invalid_id":     "❌ ID de Telegram no válido.",
-        "blockuser_done":           "🚫 El usuario `{uid}` ha sido bloqueado.",
+        "blockuser_done":           "🚫 El usuario `{target_id}` ha sido bloqueado.",
         "unblockuser_usage":        "Uso: /unblockuser <telegram_id>",
         "unblockuser_invalid_id":   "❌ ID de Telegram no válido.",
-        "unblockuser_done":         "✅ El usuario `{uid}` ha sido desbloqueado.",
+        "unblockuser_done":         "✅ El usuario `{target_id}` ha sido desbloqueado.",
         "requestlogs_usage":        "Uso: /requestlogs `<telegram_id>`\n\nEjemplo: `/requestlogs 123456789`",
         "requestlogs_invalid_id":   "❌ ID de Telegram no válido.",
-        "requestlogs_empty":        "📭 El usuario `{uid}` no ha realizado ninguna solicitud.",
-        "requestlogs_header":       "📋 *Solicitudes del usuario* `{uid}`\n📊 Total de solicitudes: *{total}*\n\n",
+        "requestlogs_empty":        "📭 El usuario `{user_id}` no ha realizado ninguna solicitud.",
+        "requestlogs_header":       "📋 *Solicitudes del usuario* `{user_id}`\n📊 Total de solicitudes: *{total}*\n\n",
         "requestlogs_row":          "{i}. `{email}`\n   🔁 {count} solicitudes — último: {last}",
         "rankings_empty":           "📭 No hay datos de solicitudes todavía.",
         "rankings_top":             "🏆 *Ranking de usuarios*\n\n👑 *Más activo:* `{tid}` @{username} con *{total}* solicitudes\n\n",
@@ -410,7 +410,7 @@ async def blockuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(uid, "blockuser_invalid_id"))
         return
     db.set_user_blocked(target_id, blocked=True)
-    await update.message.reply_text(t(uid, "blockuser_done", uid=target_id), parse_mode="Markdown")
+    await update.message.reply_text(t(uid, "blockuser_done", target_id=target_id), parse_mode="Markdown")
 
 
 async def unblockuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -426,7 +426,7 @@ async def unblockuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(uid, "unblockuser_invalid_id"))
         return
     db.set_user_blocked(target_id, blocked=False)
-    await update.message.reply_text(t(uid, "unblockuser_done", uid=target_id), parse_mode="Markdown")
+    await update.message.reply_text(t(uid, "unblockuser_done", target_id=target_id), parse_mode="Markdown")
 
 
 async def requestlogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -446,7 +446,7 @@ async def requestlogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = db.count_user_requests(target_id)
 
     if total == 0:
-        await update.message.reply_text(t(uid, "requestlogs_empty", uid=target_id), parse_mode="Markdown")
+        await update.message.reply_text(t(uid, "requestlogs_empty", user_id=target_id), parse_mode="Markdown")
         return
 
     lines = []
@@ -454,7 +454,7 @@ async def requestlogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last = r["last_requested"].strftime("%d/%m/%Y %H:%M")
         lines.append(t(uid, "requestlogs_row", i=i+1, email=r["_id"], count=r["count"], last=last))
 
-    text = t(uid, "requestlogs_header", uid=target_id, total=total) + "\n".join(lines)
+    text = t(uid, "requestlogs_header", user_id=target_id, total=total) + "\n".join(lines)
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
