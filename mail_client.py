@@ -61,8 +61,9 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
     imap_user = imap_user or IMAP_USER
     imap_pass = imap_pass or IMAP_PASS
     """
-    Connect to the IMAP mailbox and return the latest email from ALLOWED_SENDER
-    that was sent TO target_email specifically.
+    Search all emails from ALLOWED_SENDER and find the most recent one
+    where any recipient header contains target_email.
+    Falls back to full header scan to handle catch-all inboxes reliably.
     """
     target_email = target_email.lower().strip()
 
@@ -70,14 +71,15 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
         mail.login(imap_user, imap_pass)
         mail.select(IMAP_MAILBOX, readonly=True)
 
-        # Search by both FROM sender and TO recipient
-        status, data = mail.search(None, f'FROM "{ALLOWED_SENDER}" TO "{target_email}"')
-        if status == "OK" and data[0]:
-            uids = data[0].split()
-        else:
+        # Search only by FROM — don't use TO filter as catch-all inboxes
+        # often store emails with mismatched TO headers
+        status, data = mail.search(None, f'FROM "{ALLOWED_SENDER}"')
+        if status != "OK" or not data[0]:
             return None
 
-        # Walk from most recent backwards, verify TO header matches
+        uids = data[0].split()
+
+        # Walk from most recent to oldest
         for uid in reversed(uids):
             status, msg_data = mail.fetch(uid, "(RFC822)")
             if status != "OK":
@@ -85,22 +87,20 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
 
             msg = email.message_from_bytes(msg_data[0][1])
 
-            # Double-check all recipient headers to be sure
-            recipients = []
-            for header in ("To", "Cc", "Delivered-To", "X-Original-To"):
-                val = msg.get(header, "")
-                if val:
-                    recipients.append(val.lower())
-            combined = " ".join(recipients)
+            # Check all possible recipient headers
+            recipient_headers = []
+            for header in ("To", "Cc", "Delivered-To", "X-Original-To", "X-Forwarded-To"):
+                val = msg.get_all(header) or []
+                recipient_headers.extend(val)
 
-            if target_email not in combined:
-                continue
+            combined = " ".join(recipient_headers).lower()
 
-            return {
-                "sender":  _decode_str(msg.get("From", "")),
-                "date":    msg.get("Date", "Unknown"),
-                "subject": _decode_str(msg.get("Subject", "(no subject)")),
-                "body":    _get_body(msg),
-            }
+            if target_email in combined:
+                return {
+                    "sender":  _decode_str(msg.get("From", "")),
+                    "date":    msg.get("Date", "Unknown"),
+                    "subject": _decode_str(msg.get("Subject", "(no subject)")),
+                    "body":    _get_body(msg),
+                }
 
     return None
