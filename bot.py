@@ -7,6 +7,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
+    ConversationHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -91,6 +92,7 @@ STRINGS = {
             "/unblockuser `<id>` — Unblock a user\n"
             "/requestlogs `<id>` — View emails requested by a user\n"
             "/rankings — View user rankings by requests\n"
+            "/broadcast — 📢 Send a message to all users\n"
             "/adminhelp — Show this message"
         ),
         "help_text":                (
@@ -103,6 +105,11 @@ STRINGS = {
         "unknown_command":          "❓ Unknown command. Use /help for more information.",
         "btn_prev":                 "⬅️ Previous",
         "btn_next":                 "Next ➡️",
+        "broadcast_prompt":         "📢 Go ahead — type the message you'd like to broadcast to all users.\n\nSend /cancel to abort.",
+        "broadcast_cancelled":      "❌ Broadcast cancelled.",
+        "broadcast_sending":        "📤 Sending broadcast to all users, please wait…",
+        "broadcast_done":           "✅ Broadcast complete!\n\n📨 Delivered to *{success}* users.\n❌ Failed for *{failed}* users.",
+        "broadcast_empty":          "⚠️ No users found to broadcast to.",
     },
     "es": {
         "blocked":                  "🚫 Estás bloqueado y no puedes usar este bot.",
@@ -154,6 +161,7 @@ STRINGS = {
             "/unblockuser `<id>` — Desbloquear un usuario\n"
             "/requestlogs `<id>` — Ver correos solicitados por un usuario\n"
             "/rankings — Ver ranking de usuarios por solicitudes\n"
+            "/broadcast — 📢 Enviar un mensaje a todos los usuarios\n"
             "/adminhelp — Mostrar este mensaje"
         ),
         "help_text":                (
@@ -166,6 +174,11 @@ STRINGS = {
         "unknown_command":          "❓ Comando desconocido. Usa /help para obtener más información.",
         "btn_prev":                 "⬅️ Anterior",
         "btn_next":                 "Siguiente ➡️",
+        "broadcast_prompt":         "📢 Adelante — escribe el mensaje que quieres enviar a todos los usuarios.\n\nEnvía /cancel para cancelar.",
+        "broadcast_cancelled":      "❌ Transmisión cancelada.",
+        "broadcast_sending":        "📤 Enviando mensaje a todos los usuarios, por favor espera…",
+        "broadcast_done":           "✅ ¡Transmisión completa!\n\n📨 Entregado a *{success}* usuarios.\n❌ Falló para *{failed}* usuarios.",
+        "broadcast_empty":          "⚠️ No se encontraron usuarios para enviar el mensaje.",
     },
 }
 
@@ -493,6 +506,55 @@ async def adminhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────────────────────────────────────
+# Broadcast
+# ─────────────────────────────────────────────
+
+BROADCAST_MESSAGE = 1
+
+
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await admin_only(update):
+        return ConversationHandler.END
+    uid = update.effective_user.id
+    await update.message.reply_text(t(uid, "broadcast_prompt"))
+    return BROADCAST_MESSAGE
+
+
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    text_to_send = update.message.text
+
+    user_ids = db.get_all_user_ids()
+    if not user_ids:
+        await update.message.reply_text(t(uid, "broadcast_empty"))
+        return ConversationHandler.END
+
+    await update.message.reply_text(t(uid, "broadcast_sending"))
+
+    success = 0
+    failed = 0
+    for user_id in user_ids:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=text_to_send)
+            success += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)  # avoid Telegram rate limits
+
+    await update.message.reply_text(
+        t(uid, "broadcast_done", success=success, failed=failed),
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+
+async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(t(uid, "broadcast_cancelled"))
+    return ConversationHandler.END
+
+
+# ─────────────────────────────────────────────
 # Pagination callback
 # ─────────────────────────────────────────────
 
@@ -594,6 +656,18 @@ def main():
     app.add_handler(CommandHandler("requestlogs", requestlogs))
     app.add_handler(CommandHandler("rankings", rankings))
     app.add_handler(CommandHandler("adminhelp", adminhelp))
+
+    # Broadcast (ConversationHandler)
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start)],
+        states={
+            BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send),
+                CommandHandler("cancel", broadcast_cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", broadcast_cancel)],
+    ))
 
     # Pagination + Language selection (single CallbackQueryHandler routes both)
     app.add_handler(CallbackQueryHandler(pagination_callback))
