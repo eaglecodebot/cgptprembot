@@ -153,6 +153,13 @@ class Database:
         thirty_days_ago = datetime.utcnow() - timedelta(days=30)
         return self.users.count_documents({"last_seen": {"$gte": thirty_days_ago}})
 
+    def get_all_user_ids(self) -> list[int]:
+        """Return telegram_ids of all non-blocked users."""
+        return [
+            u["telegram_id"]
+            for u in self.users.find({"blocked": {"$ne": True}}, {"telegram_id": 1, "_id": 0})
+        ]
+
     # ─────────────────────────────────────────────
     # Code request logging
     # ─────────────────────────────────────────────
