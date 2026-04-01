@@ -1,12 +1,15 @@
 import imaplib
 import email
 import re
+import logging
 from email.header import decode_header
 from email.utils import parseaddr
 
 import os
 from dotenv import load_dotenv
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
@@ -60,42 +63,40 @@ def _get_body(msg):
 def fetch_latest_email_for_address(target_email: str, imap_user: str = None, imap_pass: str = None):
     imap_user = imap_user or IMAP_USER
     imap_pass = imap_pass or IMAP_PASS
-    """
-    Search all emails from ALLOWED_SENDER and find the most recent one
-    where any recipient header contains target_email.
-    Falls back to full header scan to handle catch-all inboxes reliably.
-    """
     target_email = target_email.lower().strip()
+
+    logger.info("Fetching email for: %s", target_email)
 
     with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT) as mail:
         mail.login(imap_user, imap_pass)
         mail.select(IMAP_MAILBOX, readonly=True)
 
-        # Search only by FROM — don't use TO filter as catch-all inboxes
-        # often store emails with mismatched TO headers
         status, data = mail.search(None, f'FROM "{ALLOWED_SENDER}"')
         if status != "OK" or not data[0]:
+            logger.warning("No emails found from sender: %s", ALLOWED_SENDER)
             return None
 
         uids = data[0].split()
+        logger.info("Found %d emails from sender, scanning for %s", len(uids), target_email)
 
-        # Walk from most recent to oldest
+        # Fetch only headers first (fast) to find the right email
         for uid in reversed(uids):
-            status, msg_data = mail.fetch(uid, "(RFC822)")
+            status, hdr_data = mail.fetch(
+                uid,
+                "(BODY.PEEK[HEADER.FIELDS (TO CC DELIVERED-TO X-ORIGINAL-TO X-FORWARDED-TO)])"
+            )
             if status != "OK":
                 continue
 
-            msg = email.message_from_bytes(msg_data[0][1])
+            raw_headers = hdr_data[0][1].decode("utf-8", errors="replace").lower()
+            logger.info("UID %s headers: %s", uid, raw_headers.strip())
 
-            # Check all possible recipient headers
-            recipient_headers = []
-            for header in ("To", "Cc", "Delivered-To", "X-Original-To", "X-Forwarded-To"):
-                val = msg.get_all(header) or []
-                recipient_headers.extend(val)
-
-            combined = " ".join(recipient_headers).lower()
-
-            if target_email in combined:
+            if target_email in raw_headers:
+                logger.info("Match found at UID %s, fetching full email", uid)
+                status, msg_data = mail.fetch(uid, "(RFC822)")
+                if status != "OK":
+                    continue
+                msg = email.message_from_bytes(msg_data[0][1])
                 return {
                     "sender":  _decode_str(msg.get("From", "")),
                     "date":    msg.get("Date", "Unknown"),
@@ -103,4 +104,5 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
                     "body":    _get_body(msg),
                 }
 
+        logger.warning("No email matched recipient: %s", target_email)
     return None
