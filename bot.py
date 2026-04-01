@@ -184,7 +184,7 @@ def escape_md(text: str) -> str:
     return text
 
 
-
+def extract_code(body: str):
     """Extract a 6-digit code from the email body."""
     match = re.search(r'\b(\d{6})\b', body)
     return match.group(1) if match else None
