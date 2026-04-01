@@ -177,7 +177,14 @@ def t(uid: int, key: str, **kwargs) -> str:
     return text.format(**kwargs) if kwargs else text
 
 
-def extract_code(body: str):
+def escape_md(text: str) -> str:
+    """Escape special Markdown characters in plain text values."""
+    for ch in ['_', '*', '`', '[']:
+        text = text.replace(ch, f'\\{ch}')
+    return text
+
+
+
     """Extract a 6-digit code from the email body."""
     match = re.search(r'\b(\d{6})\b', body)
     return match.group(1) if match else None
@@ -464,7 +471,7 @@ async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = []
     for i, entry in enumerate(data):
         tid = entry["_id"]["telegram_id"]
-        username = entry["_id"].get("username") or "?"
+        username = escape_md(entry["_id"].get("username") or "?")
         total = entry["total"]
         medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i + 1}."
         lines.append(t(uid, "rankings_row", medal=medal, tid=tid, username=username, total=total))
@@ -472,7 +479,7 @@ async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top = data[0]
     text = t(uid, "rankings_top",
              tid=top["_id"]["telegram_id"],
-             username=top["_id"].get("username") or "?",
+             username=escape_md(top["_id"].get("username") or "?"),
              total=top["total"]) + "\n".join(lines)
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -530,7 +537,8 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         lines = []
         for i, u in enumerate(users):
             status = t(uid, "user_blocked_status") if u.get("blocked") else t(uid, "user_active_status")
-            lines.append(f"{i + 1 + page * PAGE_SIZE}. `{u['telegram_id']}` @{u.get('username', '?')} — {status}")
+            uname = escape_md(u.get("username") or "?")
+            lines.append(f"{i + 1 + page * PAGE_SIZE}. `{u['telegram_id']}` @{uname} — {status}")
         text = t(uid, "listusers_header", total=total, active=active, page=page+1, total_pages=total_pages) + "\n".join(lines)
         buttons = []
         if page > 0:
