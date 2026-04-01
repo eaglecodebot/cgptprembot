@@ -3,7 +3,6 @@ import email
 import re
 import logging
 from email.header import decode_header
-from email.utils import parseaddr
 
 import os
 from dotenv import load_dotenv
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
 IMAP_MAILBOX = "INBOX"
-ALLOWED_SENDER = "noreply@tm.openai.com"
+ALLOWED_SENDERS = ["noreply@tm.openai.com", "noreply@tm1.openai.com"]
 IMAP_USER = os.getenv("IMAP_USER")
 IMAP_PASS = os.getenv("IMAP_PASS")
 
@@ -60,6 +59,25 @@ def _get_body(msg):
     return ""
 
 
+def _email_matches(msg, target_email: str) -> bool:
+    """Check headers first, then fall back to body if headers only have catch-all address."""
+    # Check all recipient headers
+    for header in ("To", "Cc", "Delivered-To", "X-Original-To", "X-Forwarded-To"):
+        val = msg.get_all(header) or []
+        combined = " ".join(val).lower()
+        if target_email in combined:
+            return True
+
+    # Fallback: check if target email appears in the body
+    # (some catch-all setups strip original TO and only keep catch-all)
+    body = _get_body(msg).lower()
+    if target_email in body:
+        logger.info("Matched %s via body fallback", target_email)
+        return True
+
+    return False
+
+
 def fetch_latest_email_for_address(target_email: str, imap_user: str = None, imap_pass: str = None):
     imap_user = imap_user or IMAP_USER
     imap_pass = imap_pass or IMAP_PASS
@@ -71,32 +89,33 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
         mail.login(imap_user, imap_pass)
         mail.select(IMAP_MAILBOX, readonly=True)
 
-        status, data = mail.search(None, f'FROM "{ALLOWED_SENDER}"')
-        if status != "OK" or not data[0]:
-            logger.warning("No emails found from sender: %s", ALLOWED_SENDER)
+        status, data = mail.search(None, f'FROM "{ALLOWED_SENDERS[0]}"')
+        uids_set = set(data[0].split()) if status == "OK" and data[0] else set()
+
+        for sender in ALLOWED_SENDERS[1:]:
+            status, data = mail.search(None, f'FROM "{sender}"')
+            if status == "OK" and data[0]:
+                uids_set.update(data[0].split())
+
+        if not uids_set:
+            logger.warning("No emails found from any allowed sender")
             return None
 
-        uids = data[0].split()
-        logger.info("Found %d emails from sender, scanning for %s", len(uids), target_email)
+        # Sort UIDs numerically so reversed() goes newest first
+        uids = sorted(uids_set, key=lambda x: int(x))
+        logger.info("Found %d emails total, scanning for %s", len(uids), target_email)
 
-        # Fetch only headers first (fast) to find the right email
         for uid in reversed(uids):
-            status, hdr_data = mail.fetch(
-                uid,
-                "(BODY.PEEK[HEADER.FIELDS (TO CC DELIVERED-TO X-ORIGINAL-TO X-FORWARDED-TO)])"
-            )
+            # Fetch full email (we need body for fallback matching anyway)
+            status, msg_data = mail.fetch(uid, "(RFC822)")
             if status != "OK":
                 continue
 
-            raw_headers = hdr_data[0][1].decode("utf-8", errors="replace").lower()
-            logger.info("UID %s headers: %s", uid, raw_headers.strip())
+            msg = email.message_from_bytes(msg_data[0][1])
+            logger.info("UID %s — To: %s", uid, msg.get("To", ""))
 
-            if target_email in raw_headers:
-                logger.info("Match found at UID %s, fetching full email", uid)
-                status, msg_data = mail.fetch(uid, "(RFC822)")
-                if status != "OK":
-                    continue
-                msg = email.message_from_bytes(msg_data[0][1])
+            if _email_matches(msg, target_email):
+                logger.info("Match found at UID %s", uid)
                 return {
                     "sender":  _decode_str(msg.get("From", "")),
                     "date":    msg.get("Date", "Unknown"),
