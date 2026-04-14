@@ -286,7 +286,7 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(t(uid, "code_searching", email=target_email), parse_mode="Markdown")
-    await asyncio.sleep(5)
+    await asyncio.sleep(0)
 
     try:
         db.log_code_request(uid, update.effective_user.username or "?", target_email)
