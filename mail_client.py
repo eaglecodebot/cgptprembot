@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
 IMAP_MAILBOX = "INBOX"
-ALLOWED_SENDERS = ["noreply@tm.openai.com", "noreply@tm1.openai.com"]
+ALLOWED_SENDERS = ["noreply@tm.openai.com", "noreply@tm1.openai.com", "otp@tm1.openai.com", "otp@tm.openai.com"]
 IMAP_USER = os.getenv("IMAP_USER")
 IMAP_PASS = os.getenv("IMAP_PASS")
 
