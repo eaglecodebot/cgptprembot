@@ -286,11 +286,12 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(t(uid, "code_searching", email=target_email), parse_mode="Markdown")
-    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # change to e.g. 5 if a delay is needed
 
     try:
         db.log_code_request(uid, update.effective_user.username or "?", target_email)
-        result = fetch_latest_email_for_address(target_email)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, fetch_latest_email_for_address, target_email)
         if result is None:
             await update.message.reply_text(t(uid, "code_not_found"), parse_mode="Markdown")
             return
@@ -298,7 +299,7 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code_found = extract_code(result["body"])
 
         if code_found:
-            db.assign_account(uid, target_email)  # track assigned account
+            db.assign_account(uid, target_email)
             await update.message.reply_text(t(uid, "code_found", code=code_found), parse_mode="Markdown")
             await update.message.reply_text(t(uid, "code_hint"), parse_mode="Markdown")
         else:
