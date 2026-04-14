@@ -20,12 +20,10 @@ IMAP_PASS = os.getenv("IMAP_PASS")
 
 
 # ─────────────────────────────────────────────
-# Persistent IMAP connection
+# Persistent IMAP connection pool
 # ─────────────────────────────────────────────
 
 class IMAPConnectionPool:
-    """Keeps a single persistent IMAP connection alive and reconnects if dropped."""
-
     def __init__(self):
         self._conn = None
         self._lock = threading.Lock()
@@ -42,7 +40,6 @@ class IMAPConnectionPool:
             if self._conn is None:
                 self._conn = self._connect()
                 return self._conn
-            # NOOP to check if connection is still alive
             try:
                 self._conn.noop()
             except Exception:
@@ -115,11 +112,9 @@ def _get_body(msg):
 def _email_matches(msg, target_email: str) -> bool:
     for header in ("To", "Cc", "Delivered-To", "X-Original-To", "X-Forwarded-To"):
         val = msg.get_all(header) or []
-        combined = " ".join(val).lower()
-        if target_email in combined:
+        if target_email in " ".join(val).lower():
             return True
-    body = _get_body(msg).lower()
-    if target_email in body:
+    if target_email in _get_body(msg).lower():
         logger.info("Matched %s via body fallback", target_email)
         return True
     return False
@@ -133,11 +128,9 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
     target_email = target_email.lower().strip()
     logger.info("Fetching email for: %s", target_email)
 
-    # If custom credentials provided, use a fresh connection (not the pool)
     if imap_user or imap_pass:
         return _fetch_with_fresh_connection(target_email, imap_user or IMAP_USER, imap_pass or IMAP_PASS)
 
-    # Try up to 2 times in case connection dropped mid-request
     for attempt in range(2):
         try:
             mail = _pool.get()
@@ -152,6 +145,7 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
 
 
 def _do_fetch(mail, target_email: str):
+    # Step 1: collect all UIDs from allowed senders
     uids_set = set()
     for sender in ALLOWED_SENDERS:
         status, data = mail.search(None, f'FROM "{sender}"')
@@ -162,17 +156,65 @@ def _do_fetch(mail, target_email: str):
         logger.warning("No emails found from any allowed sender")
         return None
 
-    uids = sorted(uids_set, key=lambda x: int(x))
-    logger.info("Found %d emails total, scanning for %s", len(uids), target_email)
+    # Sort descending (newest first)
+    uids = sorted(uids_set, key=lambda x: int(x), reverse=True)
+    logger.info("Found %d emails, scanning for %s", len(uids), target_email)
 
-    for uid in reversed(uids):
+    # Step 2: fetch headers only in one batch to find candidates fast
+    uid_str = b",".join(uids)
+    status, hdr_data = mail.fetch(
+        uid_str,
+        "(UID BODY.PEEK[HEADER.FIELDS (TO CC DELIVERED-TO X-ORIGINAL-TO X-FORWARDED-TO)])"
+    )
+    if status != "OK":
+        logger.warning("Batch header fetch failed")
+        return None
+
+    # Step 3: parse header responses and find matching UIDs (newest first)
+    candidate_uids = []
+    i = 0
+    while i < len(hdr_data):
+        item = hdr_data[i]
+        if isinstance(item, tuple):
+            meta = item[0].decode() if isinstance(item[0], bytes) else item[0]
+            raw_hdr = item[1].decode("utf-8", errors="replace").lower() if isinstance(item[1], bytes) else item[1].lower()
+            # extract UID from meta like "86 (UID 86 BODY[HEADER..."
+            uid_match = re.search(r'uid (\d+)', meta, re.IGNORECASE)
+            uid = uid_match.group(1).encode() if uid_match else None
+            if uid and target_email in raw_hdr:
+                candidate_uids.append(uid)
+        i += 1
+
+    # Sort candidates descending so we check newest first
+    candidate_uids.sort(key=lambda x: int(x), reverse=True)
+    logger.info("Header candidates for %s: %s", target_email, candidate_uids)
+
+    # Step 4: fetch full body only for candidates
+    for uid in candidate_uids:
         status, msg_data = mail.fetch(uid, "(RFC822)")
         if status != "OK":
             continue
         msg = email.message_from_bytes(msg_data[0][1])
-        logger.info("UID %s — To: %s", uid, msg.get("To", ""))
         if _email_matches(msg, target_email):
-            logger.info("Match found at UID %s", uid)
+            logger.info("Match confirmed at UID %s", uid)
+            return {
+                "sender":  _decode_str(msg.get("From", "")),
+                "date":    msg.get("Date", "Unknown"),
+                "subject": _decode_str(msg.get("Subject", "(no subject)")),
+                "body":    _get_body(msg),
+            }
+
+    # Step 5: fallback — body scan for catch-all inboxes that strip headers
+    logger.info("No header match, doing body fallback scan")
+    for uid in uids:
+        if uid in candidate_uids:
+            continue  # already checked
+        status, msg_data = mail.fetch(uid, "(RFC822)")
+        if status != "OK":
+            continue
+        msg = email.message_from_bytes(msg_data[0][1])
+        if _email_matches(msg, target_email):
+            logger.info("Body fallback match at UID %s", uid)
             return {
                 "sender":  _decode_str(msg.get("From", "")),
                 "date":    msg.get("Date", "Unknown"),
