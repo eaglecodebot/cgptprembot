@@ -160,6 +160,29 @@ class Database:
             for u in self.users.find({"blocked": {"$ne": True}}, {"telegram_id": 1, "_id": 0})
         ]
 
+    def assign_account(self, telegram_id: int, email: str):
+        """Add email to user's assigned accounts list (no duplicates)."""
+        self.users.update_one(
+            {"telegram_id": telegram_id},
+            {"$addToSet": {"assigned_accounts": email.lower()}},
+            upsert=True,
+        )
+
+    def get_assigned_accounts(self, telegram_id: int) -> list[str]:
+        """Return list of emails assigned to this user."""
+        user = self.users.find_one({"telegram_id": telegram_id})
+        if user:
+            return user.get("assigned_accounts", [])
+        return []
+
+    def set_assigned_accounts(self, telegram_id: int, emails: list[str]):
+        """Overwrite the assigned accounts list (used for cleanup)."""
+        self.users.update_one(
+            {"telegram_id": telegram_id},
+            {"$set": {"assigned_accounts": emails}},
+            upsert=True,
+        )
+
     # ─────────────────────────────────────────────
     # Code request logging
     # ─────────────────────────────────────────────
