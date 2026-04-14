@@ -98,7 +98,8 @@ STRINGS = {
         "help_text":                (
             "📖 *Available Commands*\n\n"
             "/start — Register and start using the bot\n"
-            "/code `<email>` — Get the latest 6-digit code sent to that email\n\n"
+            "/code `<email>` — Get the latest 6-digit code sent to that email\n"
+            "/accounts — View all accounts assigned to you\n\n"
             "_Example:_ `/code you@domain.com`\n\n"
             "If the email hasn't been registered by an admin, you'll get an error."
         ),
@@ -110,6 +111,9 @@ STRINGS = {
         "broadcast_sending":        "📤 Sending broadcast to all users, please wait…",
         "broadcast_done":           "✅ Broadcast complete!\n\n📨 Delivered to *{success}* users.\n❌ Failed for *{failed}* users.",
         "broadcast_empty":          "⚠️ No users found to broadcast to.",
+        "accounts_empty":           "📭 You have no accounts assigned yet.\n\nUse /code `<email>` to fetch a code and the account will be saved here automatically.",
+        "accounts_header":          "📋 *Your Assigned Accounts*\n📊 Total: *{total}* account(s)\n\n",
+        "accounts_row":             "{i}. `{email}`",
     },
     "es": {
         "blocked":                  "🚫 Estás bloqueado y no puedes usar este bot.",
@@ -167,7 +171,8 @@ STRINGS = {
         "help_text":                (
             "📖 *Comandos Disponibles*\n\n"
             "/start — Regístrate y empieza a usar el bot\n"
-            "/code `<correo>` — Obtén el último código de 6 dígitos enviado a ese correo\n\n"
+            "/code `<correo>` — Obtén el último código de 6 dígitos enviado a ese correo\n"
+            "/accounts — Ver todas las cuentas asignadas a ti\n\n"
             "_Ejemplo:_ `/code tu@dominio.com`\n\n"
             "Si el correo no ha sido registrado por un administrador, recibirás un error."
         ),
@@ -179,6 +184,9 @@ STRINGS = {
         "broadcast_sending":        "📤 Enviando mensaje a todos los usuarios, por favor espera…",
         "broadcast_done":           "✅ ¡Transmisión completa!\n\n📨 Entregado a *{success}* usuarios.\n❌ Falló para *{failed}* usuarios.",
         "broadcast_empty":          "⚠️ No se encontraron usuarios para enviar el mensaje.",
+        "accounts_empty":           "📭 Aún no tienes cuentas asignadas.\n\nUsa /code `<correo>` para obtener un código y la cuenta se guardará aquí automáticamente.",
+        "accounts_header":          "📋 *Tus Cuentas Asignadas*\n📊 Total: *{total}* cuenta(s)\n\n",
+        "accounts_row":             "{i}. `{email}`",
     },
 }
 
@@ -290,6 +298,7 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code_found = extract_code(result["body"])
 
         if code_found:
+            db.assign_account(uid, target_email)  # track assigned account
             await update.message.reply_text(t(uid, "code_found", code=code_found), parse_mode="Markdown")
             await update.message.reply_text(t(uid, "code_hint"), parse_mode="Markdown")
         else:
@@ -298,6 +307,28 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Error fetching email: %s", e)
         await update.message.reply_text(t(uid, "code_error"))
+
+
+async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await guard(update):
+        return
+    uid = update.effective_user.id
+    assigned = db.get_assigned_accounts(uid)
+
+    # Filter out any emails that no longer exist in registered_emails
+    active = [e for e in assigned if db.is_email_registered(e)]
+
+    # Clean up stale ones from user's list
+    if len(active) != len(assigned):
+        db.set_assigned_accounts(uid, active)
+
+    if not active:
+        await update.message.reply_text(t(uid, "accounts_empty"), parse_mode="Markdown")
+        return
+
+    lines = [t(uid, "accounts_row", i=i+1, email=e) for i, e in enumerate(active)]
+    text = t(uid, "accounts_header", total=len(active)) + "\n".join(lines)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────────
@@ -645,6 +676,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("code", code))
+    app.add_handler(CommandHandler("accounts", accounts))
 
     # Admin
     app.add_handler(CommandHandler("addmail", addmail))
