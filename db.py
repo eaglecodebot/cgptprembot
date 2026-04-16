@@ -13,10 +13,8 @@ class Database:
         self.client = MongoClient(
             uri,
             serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=10000,
-            socketTimeoutMS=20000,
-            maxIdleTimeMS=60000,
-            retryWrites=True,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=10000,
         )
         # Trigger an actual connection check immediately
         self.client.admin.command("ping")
@@ -28,6 +26,7 @@ class Database:
         self.admins = self.db["admins"]
 
         self._seed_admins()
+        self._ensure_indexes()
 
     # ─────────────────────────────────────────────
     # Seed admins from env
@@ -49,6 +48,16 @@ class Database:
                 {"$setOnInsert": {"telegram_id": tid}},
                 upsert=True,
             )
+
+    def _ensure_indexes(self):
+        self.users.create_index("telegram_id", unique=True)
+        self.users.create_index("last_seen")
+        self.users.create_index("blocked")
+        self.emails.create_index("email", unique=True)
+        self.emails.create_index("created_at")
+        self.admins.create_index("telegram_id", unique=True)
+        self.db["code_requests"].create_index([("telegram_id", 1), ("requested_at", -1)])
+        self.db["code_requests"].create_index([("telegram_id", 1), ("email", 1)])
 
     # ─────────────────────────────────────────────
     # Admin helpers
@@ -133,6 +142,12 @@ class Database:
     def list_emails(self) -> list[dict]:
         return list(self.emails.find({}, {"_id": 0, "imap_pass": 0}))
 
+    def get_registered_emails_subset(self, emails: list[str]) -> set[str]:
+        if not emails:
+            return set()
+        rows = self.emails.find({"email": {"$in": [e.lower() for e in emails]}}, {"_id": 0, "email": 1})
+        return {row["email"] for row in rows}
+
     def list_emails_paginated(self, page: int, page_size: int) -> list[dict]:
         return list(
             self.emails.find({}, {"_id": 0, "imap_pass": 0})
@@ -203,7 +218,7 @@ class Database:
             "requested_at": datetime.utcnow()
         })
 
-    def get_user_email_requests(self, telegram_id: int) -> list[dict]:
+    def get_user_email_requests_paginated(self, telegram_id: int, page: int, page_size: int) -> list[dict]:
         pipeline = [
             {"$match": {"telegram_id": telegram_id}},
             {"$group": {
@@ -211,19 +226,52 @@ class Database:
                 "count": {"$sum": 1},
                 "last_requested": {"$max": "$requested_at"}
             }},
-            {"$sort": {"count": -1}}
+            {"$sort": {"count": -1, "last_requested": -1, "_id": 1}},
+            {"$skip": page * page_size},
+            {"$limit": page_size},
         ]
         return list(self.db["code_requests"].aggregate(pipeline))
 
     def count_user_requests(self, telegram_id: int) -> int:
         return self.db["code_requests"].count_documents({"telegram_id": telegram_id})
 
-    def get_user_rankings(self) -> list[dict]:
+    def count_user_request_groups(self, telegram_id: int) -> int:
+        pipeline = [
+            {"$match": {"telegram_id": telegram_id}},
+            {"$group": {"_id": "$email"}},
+            {"$count": "total"},
+        ]
+        result = list(self.db["code_requests"].aggregate(pipeline))
+        return result[0]["total"] if result else 0
+
+    def get_user_rankings_paginated(self, page: int, page_size: int) -> list[dict]:
         pipeline = [
             {"$group": {
                 "_id": {"telegram_id": "$telegram_id", "username": "$username"},
                 "total": {"$sum": 1}
             }},
-            {"$sort": {"total": -1}}
+            {"$sort": {"total": -1, "_id.telegram_id": 1}},
+            {"$skip": page * page_size},
+            {"$limit": page_size},
         ]
         return list(self.db["code_requests"].aggregate(pipeline))
+
+    def count_rankings(self) -> int:
+        pipeline = [
+            {"$group": {"_id": "$telegram_id"}},
+            {"$count": "total"},
+        ]
+        result = list(self.db["code_requests"].aggregate(pipeline))
+        return result[0]["total"] if result else 0
+
+    def get_top_ranked_user(self):
+        pipeline = [
+            {"$group": {
+                "_id": {"telegram_id": "$telegram_id", "username": "$username"},
+                "total": {"$sum": 1}
+            }},
+            {"$sort": {"total": -1, "_id.telegram_id": 1}},
+            {"$limit": 1},
+        ]
+        result = list(self.db["code_requests"].aggregate(pipeline))
+        return result[0] if result else None
