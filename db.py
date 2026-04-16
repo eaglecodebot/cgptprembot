@@ -10,7 +10,14 @@ class Database:
         uri = os.getenv("MONGO_URI")
         if not uri:
             raise ValueError("MONGO_URI is not set in the environment / .env file")
-        self.client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        self.client = MongoClient(
+            uri,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=20000,
+            maxIdleTimeMS=60000,
+            retryWrites=True,
+        )
         # Trigger an actual connection check immediately
         self.client.admin.command("ping")
         db_name = os.getenv("MONGO_DB_NAME", "telegram_mail_bot")
