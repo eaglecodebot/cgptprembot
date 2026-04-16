@@ -2,7 +2,6 @@ import os
 import re
 import asyncio
 import logging
-from functools import partial
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -26,7 +25,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-IMAP_FETCH_TIMEOUT = float(os.getenv("IMAP_FETCH_TIMEOUT", "25"))
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set in the environment / .env file")
@@ -312,12 +310,8 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         db.log_code_request(uid, update.effective_user.username or "?", target_email)
-        loop = asyncio.get_running_loop()
-        fetch_call = partial(fetch_latest_email_for_address, target_email)
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, fetch_call),
-            timeout=IMAP_FETCH_TIMEOUT + 5,
-        )
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, fetch_latest_email_for_address, target_email)
         if result is None:
             await update.message.reply_text(t(uid, "code_not_found"), parse_mode="Markdown")
             return
@@ -331,11 +325,8 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(t(uid, "code_not_found"), parse_mode="Markdown")
 
-    except asyncio.TimeoutError:
-        logger.error("IMAP fetch timed out for %s after %ss", target_email, IMAP_FETCH_TIMEOUT)
-        await update.message.reply_text(t(uid, "code_error"))
-    except Exception:
-        logger.exception("Error fetching email for %s", target_email)
+    except Exception as e:
+        logger.error("Error fetching email: %s", e)
         await update.message.reply_text(t(uid, "code_error"))
 
 
@@ -351,7 +342,9 @@ async def send_accounts_page(message, page: int, uid: int):
     assigned = db.get_assigned_accounts(uid)
 
     # Filter out removed emails and show newest first
-    active = [e for e in reversed(assigned) if db.is_email_registered(e)]
+    assigned_reversed = list(reversed(assigned))
+    registered_set = db.get_registered_emails_subset(assigned_reversed)
+    active = [e for e in assigned_reversed if e in registered_set]
 
     # Clean up stale ones
     if len(active) != len(assigned):
@@ -537,15 +530,14 @@ async def requestlogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_requestlogs_page(message, page: int, uid: int, target_id: int):
     PAGE_SIZE = 10
-    all_requests = db.get_user_email_requests(target_id)
     total = db.count_user_requests(target_id)
-
     if total == 0:
         await message.reply_text(t(uid, "requestlogs_empty", user_id=target_id), parse_mode="Markdown")
         return
 
-    total_pages = (len(all_requests) + PAGE_SIZE - 1) // PAGE_SIZE
-    page_items = all_requests[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+    total_groups = db.count_user_request_groups(target_id)
+    total_pages = (total_groups + PAGE_SIZE - 1) // PAGE_SIZE
+    page_items = db.get_user_email_requests_paginated(target_id, page, PAGE_SIZE)
 
     lines = []
     for i, r in enumerate(page_items):
@@ -569,26 +561,44 @@ async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     uid = update.effective_user.id
-    data = db.get_user_rankings()
+    await send_rankings_page(update.message, page=0, uid=uid)
 
-    if not data:
-        await update.message.reply_text(t(uid, "rankings_empty"))
+
+async def send_rankings_page(message, page: int, uid: int):
+    PAGE_SIZE = 10
+    total = db.count_rankings()
+
+    if total == 0:
+        await message.reply_text(t(uid, "rankings_empty"))
         return
 
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+    data = db.get_user_rankings_paginated(page, PAGE_SIZE)
+    top = db.get_top_ranked_user()
+
     lines = []
+    start_rank = page * PAGE_SIZE
     for i, entry in enumerate(data):
         tid = entry["_id"]["telegram_id"]
         username = escape_md(entry["_id"].get("username") or "?")
-        total = entry["total"]
-        medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i + 1}."
-        lines.append(t(uid, "rankings_row", medal=medal, tid=tid, username=username, total=total))
+        total_requests = entry["total"]
+        rank_index = start_rank + i
+        medal = ["🥇", "🥈", "🥉"][rank_index] if rank_index < 3 else f"{rank_index + 1}."
+        lines.append(t(uid, "rankings_row", medal=medal, tid=tid, username=username, total=total_requests))
 
-    top = data[0]
     text = t(uid, "rankings_top",
              tid=top["_id"]["telegram_id"],
              username=escape_md(top["_id"].get("username") or "?"),
              total=top["total"]) + "\n".join(lines)
-    await update.message.reply_text(text, parse_mode="Markdown")
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"rankings_page_{page - 1}"))
+    if (page + 1) < total_pages:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"rankings_page_{page + 1}"))
+
+    keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def adminhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -782,7 +792,9 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith("accounts_page_"):
         page = int(data.split("_")[-1])
         assigned = db.get_assigned_accounts(uid)
-        active = [e for e in reversed(assigned) if db.is_email_registered(e)]
+        assigned_reversed = list(reversed(assigned))
+        registered_set = db.get_registered_emails_subset(assigned_reversed)
+        active = [e for e in assigned_reversed if e in registered_set]
         total = len(active)
         if not active:
             await query.edit_message_text(t(uid, "accounts_empty"), parse_mode="Markdown")
@@ -805,11 +817,11 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         parts = data.split("_")
         target_id = int(parts[1])
         page = int(parts[2])
-        all_requests = db.get_user_email_requests(target_id)
         total = db.count_user_requests(target_id)
         PAGE_SIZE = 10
-        total_pages = (len(all_requests) + PAGE_SIZE - 1) // PAGE_SIZE
-        page_items = all_requests[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        total_groups = db.count_user_request_groups(target_id)
+        total_pages = (total_groups + PAGE_SIZE - 1) // PAGE_SIZE
+        page_items = db.get_user_email_requests_paginated(target_id, page, PAGE_SIZE)
         lines = []
         for i, r in enumerate(page_items):
             last = r["last_requested"].strftime("%d/%m/%Y %H:%M")
@@ -820,6 +832,35 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"rlogs_{target_id}_{page - 1}"))
         if (page + 1) < total_pages:
             buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"rlogs_{target_id}_{page + 1}"))
+        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        return
+
+    elif data.startswith("rankings_page_"):
+        page = int(data.split("_")[-1])
+        PAGE_SIZE = 10
+        total = db.count_rankings()
+        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        data_rows = db.get_user_rankings_paginated(page, PAGE_SIZE)
+        top = db.get_top_ranked_user()
+        lines = []
+        start_rank = page * PAGE_SIZE
+        for i, entry in enumerate(data_rows):
+            tid = entry["_id"]["telegram_id"]
+            username = escape_md(entry["_id"].get("username") or "?")
+            total_requests = entry["total"]
+            rank_index = start_rank + i
+            medal = ["🥇", "🥈", "🥉"][rank_index] if rank_index < 3 else f"{rank_index + 1}."
+            lines.append(t(uid, "rankings_row", medal=medal, tid=tid, username=username, total=total_requests))
+        text = t(uid, "rankings_top",
+                 tid=top["_id"]["telegram_id"],
+                 username=escape_md(top["_id"].get("username") or "?"),
+                 total=top["total"]) + "\n".join(lines)
+        buttons = []
+        if page > 0:
+            buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"rankings_page_{page - 1}"))
+        if (page + 1) < total_pages:
+            buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"rankings_page_{page + 1}"))
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
         return
@@ -868,31 +909,12 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # App bootstrap
 # ─────────────────────────────────────────────
 
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.exception("Unhandled exception while processing update", exc_info=context.error)
-
-
 def main():
     if not BOT_TOKEN:
         logger.critical("BOT_TOKEN is missing. Exiting.")
         return
 
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .concurrent_updates(True)
-        .connect_timeout(15.0)
-        .read_timeout(20.0)
-        .write_timeout(20.0)
-        .pool_timeout(20.0)
-        .get_updates_connect_timeout(15.0)
-        .get_updates_read_timeout(20.0)
-        .get_updates_pool_timeout(20.0)
-        .build()
-    )
-
-    app.add_error_handler(error_handler)
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # User
     app.add_handler(CommandHandler("start", start))
@@ -955,7 +977,7 @@ def main():
 
     logger.info("Bot is running…")
     try:
-        app.run_polling(drop_pending_updates=True)
+        app.run_polling()
     except Exception as e:
         logger.critical("Bot crashed: %s", e)
         raise
