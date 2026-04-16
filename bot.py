@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import logging
+from functools import partial
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -25,6 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+IMAP_FETCH_TIMEOUT = float(os.getenv("IMAP_FETCH_TIMEOUT", "25"))
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set in the environment / .env file")
@@ -310,8 +312,12 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         db.log_code_request(uid, update.effective_user.username or "?", target_email)
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, fetch_latest_email_for_address, target_email)
+        loop = asyncio.get_running_loop()
+        fetch_call = partial(fetch_latest_email_for_address, target_email)
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, fetch_call),
+            timeout=IMAP_FETCH_TIMEOUT + 5,
+        )
         if result is None:
             await update.message.reply_text(t(uid, "code_not_found"), parse_mode="Markdown")
             return
@@ -325,8 +331,11 @@ async def code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(t(uid, "code_not_found"), parse_mode="Markdown")
 
-    except Exception as e:
-        logger.error("Error fetching email: %s", e)
+    except asyncio.TimeoutError:
+        logger.error("IMAP fetch timed out for %s after %ss", target_email, IMAP_FETCH_TIMEOUT)
+        await update.message.reply_text(t(uid, "code_error"))
+    except Exception:
+        logger.exception("Error fetching email for %s", target_email)
         await update.message.reply_text(t(uid, "code_error"))
 
 
@@ -859,12 +868,31 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # App bootstrap
 # ─────────────────────────────────────────────
 
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.exception("Unhandled exception while processing update", exc_info=context.error)
+
+
 def main():
     if not BOT_TOKEN:
         logger.critical("BOT_TOKEN is missing. Exiting.")
         return
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)
+        .connect_timeout(15.0)
+        .read_timeout(20.0)
+        .write_timeout(20.0)
+        .pool_timeout(20.0)
+        .get_updates_connect_timeout(15.0)
+        .get_updates_read_timeout(20.0)
+        .get_updates_pool_timeout(20.0)
+        .build()
+    )
+
+    app.add_error_handler(error_handler)
 
     # User
     app.add_handler(CommandHandler("start", start))
@@ -927,7 +955,7 @@ def main():
 
     logger.info("Bot is running…")
     try:
-        app.run_polling()
+        app.run_polling(drop_pending_updates=True)
     except Exception as e:
         logger.critical("Bot crashed: %s", e)
         raise
