@@ -1,5 +1,6 @@
 import os
 from pymongo import MongoClient
+from pymongo.errors import OperationFailure
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -54,7 +55,12 @@ class Database:
         self.users.create_index("last_seen")
         self.users.create_index("blocked")
         self.emails.create_index("email", unique=True)
-        self.emails.create_index("created_at")
+        try:
+            self.emails.create_index("created_at")
+        except OperationFailure as e:
+            # Ignore conflict if an older TTL index already exists on created_at
+            if getattr(e, "code", None) != 85:
+                raise
         self.admins.create_index("telegram_id", unique=True)
         self.db["code_requests"].create_index([("telegram_id", 1), ("requested_at", -1)])
         self.db["code_requests"].create_index([("telegram_id", 1), ("email", 1)])
