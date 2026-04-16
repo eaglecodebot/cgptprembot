@@ -85,14 +85,16 @@ STRINGS = {
         "adminhelp_text":           (
             "🛠️ *Admin Commands*\n\n"
             "/addmail `<email>` — Register a new email address\n"
+            "/bulkaddmail — Add multiple emails at once\n"
             "/removemail `<email>` — Remove a registered email\n"
+            "/bulkremovemail — Remove multiple emails at once\n"
             "/listmails — View all registered emails\n"
             "/listusers — View all bot users\n"
             "/blockuser `<id>` — Block a user by Telegram ID\n"
             "/unblockuser `<id>` — Unblock a user\n"
             "/requestlogs `<id>` — View emails requested by a user\n"
             "/rankings — View user rankings by requests\n"
-            "/broadcast — Send a message to all users\n"
+            "/broadcast — 📢 Send a message to all users\n"
             "/adminhelp — Show this message"
         ),
         "help_text":                (
@@ -112,8 +114,16 @@ STRINGS = {
         "broadcast_done":           "✅ Broadcast complete!\n\n📨 Delivered to *{success}* users.\n❌ Failed for *{failed}* users.",
         "broadcast_empty":          "⚠️ No users found to broadcast to.",
         "accounts_empty":           "📭 You have no accounts assigned yet.\n\nUse /code `<email>` to fetch a code and the account will be saved here automatically.",
-        "accounts_header":          "📋 *Your Assigned Accounts*\n📊 Total: *{total}* account(s)\n\n",
+        "accounts_header":          "📋 *Your Assigned Accounts*\n📊 Total: *{total}* account(s)\n\nPage {page}/{total_pages}:\n\n",
         "accounts_row":             "{i}. `{email}`",
+        "bulkaddmail_prompt":       "📋 Send me the email addresses to *add*, one per line.\n\nSend /cancel to abort.",
+        "bulkremovemail_prompt":    "🗑️ Send me the email addresses to *remove*, one per line.\n\nSend /cancel to abort.",
+        "bulk_cancelled":           "❌ Cancelled.",
+        "bulkaddmail_done":         "✅ *Bulk Add Complete!*\n\n✅ Added ({added}):\n{added_list}\n\nℹ️ Already existed ({skipped}):\n{skipped_list}",
+        "bulkaddmail_done_noskip":  "✅ *Bulk Add Complete!*\n\n✅ Added ({added}):\n{added_list}",
+        "bulkremovemail_done":      "🗑️ *Bulk Remove Complete!*\n\n🗑️ Removed ({removed}):\n{removed_list}\n\n❌ Not found ({skipped}):\n{skipped_list}",
+        "bulkremovemail_done_nosk": "🗑️ *Bulk Remove Complete!*\n\n🗑️ Removed ({removed}):\n{removed_list}",
+        "bulk_no_valid":            "⚠️ No valid email addresses found in your message.",
     },
     "es": {
         "blocked":                  "🚫 Estás bloqueado y no puedes usar este bot.",
@@ -158,14 +168,16 @@ STRINGS = {
         "adminhelp_text":           (
             "🛠️ *Comandos de Administrador*\n\n"
             "/addmail `<correo>` — Registrar una nueva dirección de correo\n"
+            "/bulkaddmail — Agregar múltiples correos a la vez\n"
             "/removemail `<correo>` — Eliminar un correo registrado\n"
+            "/bulkremovemail — Eliminar múltiples correos a la vez\n"
             "/listmails — Ver todos los correos registrados\n"
             "/listusers — Ver todos los usuarios del bot\n"
             "/blockuser `<id>` — Bloquear un usuario por su ID de Telegram\n"
             "/unblockuser `<id>` — Desbloquear un usuario\n"
             "/requestlogs `<id>` — Ver correos solicitados por un usuario\n"
             "/rankings — Ver ranking de usuarios por solicitudes\n"
-            "/broadcast — Enviar un mensaje a todos los usuarios\n"
+            "/broadcast — 📢 Enviar un mensaje a todos los usuarios\n"
             "/adminhelp — Mostrar este mensaje"
         ),
         "help_text":                (
@@ -185,8 +197,16 @@ STRINGS = {
         "broadcast_done":           "✅ ¡Transmisión completa!\n\n📨 Entregado a *{success}* usuarios.\n❌ Falló para *{failed}* usuarios.",
         "broadcast_empty":          "⚠️ No se encontraron usuarios para enviar el mensaje.",
         "accounts_empty":           "📭 Aún no tienes cuentas asignadas.\n\nUsa /code `<correo>` para obtener un código y la cuenta se guardará aquí automáticamente.",
-        "accounts_header":          "📋 *Tus Cuentas Asignadas*\n📊 Total: *{total}* cuenta(s)\n\n",
+        "accounts_header":          "📋 *Tus Cuentas Asignadas*\n📊 Total: *{total}* cuenta(s)\n\nPágina {page}/{total_pages}:\n\n",
         "accounts_row":             "{i}. `{email}`",
+        "bulkaddmail_prompt":       "📋 Envíame las direcciones de correo a *agregar*, una por línea.\n\nEnvía /cancel para cancelar.",
+        "bulkremovemail_prompt":    "🗑️ Envíame las direcciones de correo a *eliminar*, una por línea.\n\nEnvía /cancel para cancelar.",
+        "bulk_cancelled":           "❌ Cancelado.",
+        "bulkaddmail_done":         "✅ *¡Adición masiva completa!*\n\n✅ Agregados ({added}):\n{added_list}\n\nℹ️ Ya existían ({skipped}):\n{skipped_list}",
+        "bulkaddmail_done_noskip":  "✅ *¡Adición masiva completa!*\n\n✅ Agregados ({added}):\n{added_list}",
+        "bulkremovemail_done":      "🗑️ *¡Eliminación masiva completa!*\n\n🗑️ Eliminados ({removed}):\n{removed_list}\n\n❌ No encontrados ({skipped}):\n{skipped_list}",
+        "bulkremovemail_done_nosk": "🗑️ *¡Eliminación masiva completa!*\n\n🗑️ Eliminados ({removed}):\n{removed_list}",
+        "bulk_no_valid":            "⚠️ No se encontraron direcciones de correo válidas en tu mensaje.",
     },
 }
 
@@ -314,22 +334,39 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await guard(update):
         return
     uid = update.effective_user.id
+    await send_accounts_page(update.message, page=0, uid=uid)
+
+
+async def send_accounts_page(message, page: int, uid: int):
+    PAGE_SIZE = 10
     assigned = db.get_assigned_accounts(uid)
 
-    # Filter out any emails that no longer exist in registered_emails
-    active = [e for e in assigned if db.is_email_registered(e)]
+    # Filter out removed emails and show newest first
+    active = [e for e in reversed(assigned) if db.is_email_registered(e)]
 
-    # Clean up stale ones from user's list
+    # Clean up stale ones
     if len(active) != len(assigned):
-        db.set_assigned_accounts(uid, active)
+        db.set_assigned_accounts(uid, list(reversed(active)))
 
     if not active:
-        await update.message.reply_text(t(uid, "accounts_empty"), parse_mode="Markdown")
+        await message.reply_text(t(uid, "accounts_empty"), parse_mode="Markdown")
         return
 
-    lines = [t(uid, "accounts_row", i=i+1, email=e) for i, e in enumerate(active)]
-    text = t(uid, "accounts_header", total=len(active)) + "\n".join(lines)
-    await update.message.reply_text(text, parse_mode="Markdown")
+    total = len(active)
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+    page_items = active[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+    lines = [t(uid, "accounts_row", i=i + 1 + page * PAGE_SIZE, email=e) for i, e in enumerate(page_items)]
+    text = t(uid, "accounts_header", total=total, page=page+1, total_pages=total_pages) + "\n".join(lines)
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"accounts_page_{page - 1}"))
+    if (page + 1) < total_pages:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"accounts_page_{page + 1}"))
+
+    keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 # ─────────────────────────────────────────────
@@ -486,21 +523,36 @@ async def requestlogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text(t(uid, "requestlogs_invalid_id"))
         return
+    await send_requestlogs_page(update.message, page=0, uid=uid, target_id=target_id)
 
-    requests = db.get_user_email_requests(target_id)
+
+async def send_requestlogs_page(message, page: int, uid: int, target_id: int):
+    PAGE_SIZE = 10
+    all_requests = db.get_user_email_requests(target_id)
     total = db.count_user_requests(target_id)
 
     if total == 0:
-        await update.message.reply_text(t(uid, "requestlogs_empty", user_id=target_id), parse_mode="Markdown")
+        await message.reply_text(t(uid, "requestlogs_empty", user_id=target_id), parse_mode="Markdown")
         return
 
+    total_pages = (len(all_requests) + PAGE_SIZE - 1) // PAGE_SIZE
+    page_items = all_requests[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
     lines = []
-    for i, r in enumerate(requests):
+    for i, r in enumerate(page_items):
         last = r["last_requested"].strftime("%d/%m/%Y %H:%M")
-        lines.append(t(uid, "requestlogs_row", i=i+1, email=r["_id"], count=r["count"], last=last))
+        lines.append(t(uid, "requestlogs_row", i=i + 1 + page * PAGE_SIZE, email=r["_id"], count=r["count"], last=last))
 
     text = t(uid, "requestlogs_header", user_id=target_id, total=total) + "\n".join(lines)
-    await update.message.reply_text(text, parse_mode="Markdown")
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"rlogs_{target_id}_{page - 1}"))
+    if (page + 1) < total_pages:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"rlogs_{target_id}_{page + 1}"))
+
+    keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def rankings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,6 +587,102 @@ async def adminhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     uid = update.effective_user.id
     await update.message.reply_text(t(uid, "adminhelp_text"), parse_mode="Markdown")
+
+
+# ─────────────────────────────────────────────
+# Bulk add/remove mail
+# ─────────────────────────────────────────────
+
+BULK_ADD_MAIL = 10
+BULK_REMOVE_MAIL = 11
+
+
+async def bulkaddmail_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await admin_only(update):
+        return ConversationHandler.END
+    uid = update.effective_user.id
+    await update.message.reply_text(t(uid, "bulkaddmail_prompt"), parse_mode="Markdown")
+    return BULK_ADD_MAIL
+
+
+async def bulkaddmail_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    lines = update.message.text.strip().splitlines()
+    emails = [l.strip().lower() for l in lines if l.strip()]
+
+    if not emails:
+        await update.message.reply_text(t(uid, "bulk_no_valid"))
+        return ConversationHandler.END
+
+    added = []
+    skipped = []
+    for email_addr in emails:
+        if db.is_email_registered(email_addr):
+            skipped.append(email_addr)
+        else:
+            db.add_email(email_addr, added_by=uid)
+            added.append(email_addr)
+
+    added_list = "\n".join(f"`{e}`" for e in added) if added else "—"
+    skipped_list = "\n".join(f"`{e}`" for e in skipped) if skipped else "—"
+
+    if skipped:
+        text = t(uid, "bulkaddmail_done",
+                 added=len(added), added_list=added_list,
+                 skipped=len(skipped), skipped_list=skipped_list)
+    else:
+        text = t(uid, "bulkaddmail_done_noskip",
+                 added=len(added), added_list=added_list)
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    return ConversationHandler.END
+
+
+async def bulkremovemail_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await admin_only(update):
+        return ConversationHandler.END
+    uid = update.effective_user.id
+    await update.message.reply_text(t(uid, "bulkremovemail_prompt"), parse_mode="Markdown")
+    return BULK_REMOVE_MAIL
+
+
+async def bulkremovemail_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    lines = update.message.text.strip().splitlines()
+    emails = [l.strip().lower() for l in lines if l.strip()]
+
+    if not emails:
+        await update.message.reply_text(t(uid, "bulk_no_valid"))
+        return ConversationHandler.END
+
+    removed = []
+    skipped = []
+    for email_addr in emails:
+        if db.is_email_registered(email_addr):
+            db.remove_email(email_addr)
+            removed.append(email_addr)
+        else:
+            skipped.append(email_addr)
+
+    removed_list = "\n".join(f"`{e}`" for e in removed) if removed else "—"
+    skipped_list = "\n".join(f"`{e}`" for e in skipped) if skipped else "—"
+
+    if skipped:
+        text = t(uid, "bulkremovemail_done",
+                 removed=len(removed), removed_list=removed_list,
+                 skipped=len(skipped), skipped_list=skipped_list)
+    else:
+        text = t(uid, "bulkremovemail_done_nosk",
+                 removed=len(removed), removed_list=removed_list)
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    return ConversationHandler.END
+
+
+async def bulk_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(t(uid, "bulk_cancelled"))
+    return ConversationHandler.END
 
 
 # ─────────────────────────────────────────────
@@ -622,6 +770,51 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
+    elif data.startswith("accounts_page_"):
+        page = int(data.split("_")[-1])
+        assigned = db.get_assigned_accounts(uid)
+        active = [e for e in reversed(assigned) if db.is_email_registered(e)]
+        total = len(active)
+        if not active:
+            await query.edit_message_text(t(uid, "accounts_empty"), parse_mode="Markdown")
+            return
+        PAGE_SIZE = 10
+        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        page_items = active[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        lines = [t(uid, "accounts_row", i=i + 1 + page * PAGE_SIZE, email=e) for i, e in enumerate(page_items)]
+        text = t(uid, "accounts_header", total=total, page=page+1, total_pages=total_pages) + "\n".join(lines)
+        buttons = []
+        if page > 0:
+            buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"accounts_page_{page - 1}"))
+        if (page + 1) < total_pages:
+            buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"accounts_page_{page + 1}"))
+        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        return
+
+    elif data.startswith("rlogs_"):
+        parts = data.split("_")
+        target_id = int(parts[1])
+        page = int(parts[2])
+        all_requests = db.get_user_email_requests(target_id)
+        total = db.count_user_requests(target_id)
+        PAGE_SIZE = 10
+        total_pages = (len(all_requests) + PAGE_SIZE - 1) // PAGE_SIZE
+        page_items = all_requests[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        lines = []
+        for i, r in enumerate(page_items):
+            last = r["last_requested"].strftime("%d/%m/%Y %H:%M")
+            lines.append(t(uid, "requestlogs_row", i=i + 1 + page * PAGE_SIZE, email=r["_id"], count=r["count"], last=last))
+        text = t(uid, "requestlogs_header", user_id=target_id, total=total) + "\n".join(lines)
+        buttons = []
+        if page > 0:
+            buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"rlogs_{target_id}_{page - 1}"))
+        if (page + 1) < total_pages:
+            buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"rlogs_{target_id}_{page + 1}"))
+        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        return
+
     elif data.startswith("users_page_"):
         page = int(data.split("_")[-1])
         PAGE_SIZE = 10
@@ -700,6 +893,30 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", broadcast_cancel)],
+    ))
+
+    # Bulk add mail (ConversationHandler)
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("bulkaddmail", bulkaddmail_start)],
+        states={
+            BULK_ADD_MAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bulkaddmail_receive),
+                CommandHandler("cancel", bulk_cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", bulk_cancel)],
+    ))
+
+    # Bulk remove mail (ConversationHandler)
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("bulkremovemail", bulkremovemail_start)],
+        states={
+            BULK_REMOVE_MAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bulkremovemail_receive),
+                CommandHandler("cancel", bulk_cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", bulk_cancel)],
     ))
 
     # Pagination + Language selection (single CallbackQueryHandler routes both)
