@@ -94,7 +94,7 @@ STRINGS = {
             "/unblockuser `<id>` — Unblock a user\n"
             "/requestlogs `<id>` — View emails requested by a user\n"
             "/rankings — View user rankings by requests\n"
-            "/broadcast — 📢 Send a message to all users\n"
+            "/broadcast — Send a message to all users\n"
             "/adminhelp — Show this message"
         ),
         "help_text":                (
@@ -177,7 +177,7 @@ STRINGS = {
             "/unblockuser `<id>` — Desbloquear un usuario\n"
             "/requestlogs `<id>` — Ver correos solicitados por un usuario\n"
             "/rankings — Ver ranking de usuarios por solicitudes\n"
-            "/broadcast — 📢 Enviar un mensaje a todos los usuarios\n"
+            "/broadcast — Enviar un mensaje a todos los usuarios\n"
             "/adminhelp — Mostrar este mensaje"
         ),
         "help_text":                (
