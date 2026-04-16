@@ -2,7 +2,6 @@ import imaplib
 import email
 import re
 import logging
-import threading
 from email.header import decode_header
 
 import os
@@ -11,57 +10,13 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-IMAP_HOST = "imap.gmail.com"
-IMAP_PORT = 993
-IMAP_MAILBOX = "INBOX"
+IMAP_HOST = os.getenv("IMAP_HOST", "imap.gmail.com")
+IMAP_PORT = int(os.getenv("IMAP_PORT", "993"))
+IMAP_MAILBOX = os.getenv("IMAP_MAILBOX", "INBOX")
+IMAP_TIMEOUT = float(os.getenv("IMAP_TIMEOUT", "25"))
 ALLOWED_SENDERS = ["noreply@tm.openai.com", "noreply@tm1.openai.com", "otp@tm1.openai.com", "otp@tm.openai.com"]
 IMAP_USER = os.getenv("IMAP_USER")
 IMAP_PASS = os.getenv("IMAP_PASS")
-
-
-# ─────────────────────────────────────────────
-# Persistent IMAP connection pool
-# ─────────────────────────────────────────────
-
-class IMAPConnectionPool:
-    def __init__(self):
-        self._conn = None
-        self._lock = threading.Lock()
-
-    def _connect(self):
-        logger.info("Opening new IMAP connection…")
-        conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-        conn.login(IMAP_USER, IMAP_PASS)
-        conn.select(IMAP_MAILBOX, readonly=True)
-        return conn
-
-    def get(self) -> imaplib.IMAP4_SSL:
-        with self._lock:
-            if self._conn is None:
-                self._conn = self._connect()
-                return self._conn
-            try:
-                self._conn.noop()
-            except Exception:
-                logger.warning("IMAP connection dropped, reconnecting…")
-                try:
-                    self._conn.logout()
-                except Exception:
-                    pass
-                self._conn = self._connect()
-            return self._conn
-
-    def invalidate(self):
-        with self._lock:
-            if self._conn:
-                try:
-                    self._conn.logout()
-                except Exception:
-                    pass
-                self._conn = None
-
-
-_pool = IMAPConnectionPool()
 
 
 # ─────────────────────────────────────────────
@@ -128,19 +83,22 @@ def fetch_latest_email_for_address(target_email: str, imap_user: str = None, ima
     target_email = target_email.lower().strip()
     logger.info("Fetching email for: %s", target_email)
 
-    if imap_user or imap_pass:
-        return _fetch_with_fresh_connection(target_email, imap_user or IMAP_USER, imap_pass or IMAP_PASS)
+    username = imap_user or IMAP_USER
+    password = imap_pass or IMAP_PASS
 
+    if not username or not password:
+        raise ValueError("IMAP_USER / IMAP_PASS are not configured")
+
+    last_error = None
     for attempt in range(2):
         try:
-            mail = _pool.get()
-            return _do_fetch(mail, target_email)
+            return _fetch_with_fresh_connection(target_email, username, password)
         except Exception as e:
+            last_error = e
             logger.warning("IMAP fetch attempt %d failed: %s", attempt + 1, e)
-            _pool.invalidate()
-            if attempt == 1:
-                raise
 
+    if last_error:
+        raise last_error
     return None
 
 
@@ -227,7 +185,7 @@ def _do_fetch(mail, target_email: str):
 
 
 def _fetch_with_fresh_connection(target_email: str, imap_user: str, imap_pass: str):
-    with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT) as mail:
+    with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=IMAP_TIMEOUT) as mail:
         mail.login(imap_user, imap_pass)
         mail.select(IMAP_MAILBOX, readonly=True)
         return _do_fetch(mail, target_email)
