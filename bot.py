@@ -211,9 +211,22 @@ STRINGS = {
 }
 
 
+# Small in-memory caches. These remove repeated MongoDB round trips during
+# pagination button clicks. They reset automatically when the bot restarts.
+LANG_CACHE: dict[int, str] = {}
+ADMIN_CACHE: dict[int, bool] = {}
+
+
+def get_cached_language(uid: int) -> str:
+    """Return user's language without hitting MongoDB on every translation."""
+    if uid not in LANG_CACHE:
+        LANG_CACHE[uid] = db.get_user_language(uid)
+    return LANG_CACHE[uid]
+
+
 def t(uid: int, key: str, **kwargs) -> str:
     """Return translated string for user's language."""
-    lang = db.get_user_language(uid)
+    lang = get_cached_language(uid)
     text = STRINGS.get(lang, STRINGS["es"]).get(key, key)
     return text.format(**kwargs) if kwargs else text
 
@@ -236,7 +249,10 @@ def extract_code(body: str):
 # ─────────────────────────────────────────────
 
 def is_admin(user_id: int) -> bool:
-    return db.is_admin(user_id)
+    """Cached admin check to avoid repeated DB lookups on every callback."""
+    if user_id not in ADMIN_CACHE:
+        ADMIN_CACHE[user_id] = db.is_admin(user_id)
+    return ADMIN_CACHE[user_id]
 
 
 def is_blocked(user_id: int) -> bool:
@@ -279,6 +295,7 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = query.from_user.id
     lang = query.data.split("_")[1]  # "en" or "es"
     db.set_user_language(uid, lang)
+    LANG_CACHE[uid] = lang
 
     await query.edit_message_text(STRINGS[lang]["language_set"])
 
@@ -369,6 +386,42 @@ async def send_accounts_page(message, page: int, uid: int):
 
     keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
     await message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+
+
+async def edit_accounts_page(query, page: int, uid: int):
+    """Edit the existing /accounts message when a user presses Next/Previous."""
+    PAGE_SIZE = 10
+    assigned = db.get_assigned_accounts(uid)
+
+    # Filter out removed emails and show newest first
+    assigned_reversed = list(reversed(assigned))
+    registered_set = db.get_registered_emails_subset(assigned_reversed)
+    active = [e for e in assigned_reversed if e in registered_set]
+
+    # Clean up stale ones only when needed
+    if len(active) != len(assigned):
+        db.set_assigned_accounts(uid, list(reversed(active)))
+
+    if not active:
+        await query.edit_message_text(t(uid, "accounts_empty"), parse_mode="Markdown")
+        return
+
+    total = len(active)
+    total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+    page = max(0, min(page, total_pages - 1))
+    page_items = active[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+    lines = [t(uid, "accounts_row", i=i + 1 + page * PAGE_SIZE, email=e) for i, e in enumerate(page_items)]
+    text = t(uid, "accounts_header", total=total, page=page+1, total_pages=total_pages) + "\n".join(lines)
+
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"accounts_page_{page - 1}"))
+    if (page + 1) < total_pages:
+        buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"accounts_page_{page + 1}"))
+
+    keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 # ─────────────────────────────────────────────
@@ -494,6 +547,7 @@ async def blockuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(uid, "blockuser_invalid_id"))
         return
     db.set_user_blocked(target_id, blocked=True)
+    ADMIN_CACHE.pop(target_id, None)
     await update.message.reply_text(t(uid, "blockuser_done", target_id=target_id), parse_mode="Markdown")
 
 
@@ -510,6 +564,7 @@ async def unblockuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(uid, "unblockuser_invalid_id"))
         return
     db.set_user_blocked(target_id, blocked=False)
+    ADMIN_CACHE.pop(target_id, None)
     await update.message.reply_text(t(uid, "unblockuser_done", target_id=target_id), parse_mode="Markdown")
 
 
@@ -759,6 +814,9 @@ async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not query or not query.from_user or not query.data:
+        return
+
     uid = query.from_user.id
     data = query.data
 
@@ -767,8 +825,20 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await language_callback(update, context)
         return
 
+    # Acknowledge the button immediately so Telegram does not show a long spinner.
     await query.answer()
 
+    if is_blocked(uid):
+        await query.answer(t(uid, "blocked"), show_alert=True)
+        return
+
+    # /accounts is a normal user feature, so it must be handled before admin-only checks.
+    if data.startswith("accounts_page_"):
+        page = int(data.split("_")[-1])
+        await edit_accounts_page(query, page=page, uid=uid)
+        return
+
+    # Everything below is admin-only pagination.
     if not is_admin(uid):
         await query.answer(t(uid, "admin_only"), show_alert=True)
         return
@@ -778,7 +848,8 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         PAGE_SIZE = 10
         emails = db.list_emails_paginated(page, PAGE_SIZE)
         total = db.count_emails()
-        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE if total else 1
+        page = max(0, min(page, total_pages - 1))
         lines = [f"{i + 1 + page * PAGE_SIZE}. `{e['email']}`" for i, e in enumerate(emails)]
         text = t(uid, "listmails_header", total=total, page=page+1, total_pages=total_pages) + "\n".join(lines)
         buttons = []
@@ -788,39 +859,20 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"mails_page_{page + 1}"))
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
-
-    elif data.startswith("accounts_page_"):
-        page = int(data.split("_")[-1])
-        assigned = db.get_assigned_accounts(uid)
-        assigned_reversed = list(reversed(assigned))
-        registered_set = db.get_registered_emails_subset(assigned_reversed)
-        active = [e for e in assigned_reversed if e in registered_set]
-        total = len(active)
-        if not active:
-            await query.edit_message_text(t(uid, "accounts_empty"), parse_mode="Markdown")
-            return
-        PAGE_SIZE = 10
-        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
-        page_items = active[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-        lines = [t(uid, "accounts_row", i=i + 1 + page * PAGE_SIZE, email=e) for i, e in enumerate(page_items)]
-        text = t(uid, "accounts_header", total=total, page=page+1, total_pages=total_pages) + "\n".join(lines)
-        buttons = []
-        if page > 0:
-            buttons.append(InlineKeyboardButton(t(uid, "btn_prev"), callback_data=f"accounts_page_{page - 1}"))
-        if (page + 1) < total_pages:
-            buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"accounts_page_{page + 1}"))
-        keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
         return
 
-    elif data.startswith("rlogs_"):
+    if data.startswith("rlogs_"):
         parts = data.split("_")
         target_id = int(parts[1])
         page = int(parts[2])
-        total = db.count_user_requests(target_id)
         PAGE_SIZE = 10
+        total = db.count_user_requests(target_id)
+        if total == 0:
+            await query.edit_message_text(t(uid, "requestlogs_empty", user_id=target_id), parse_mode="Markdown")
+            return
         total_groups = db.count_user_request_groups(target_id)
-        total_pages = (total_groups + PAGE_SIZE - 1) // PAGE_SIZE
+        total_pages = (total_groups + PAGE_SIZE - 1) // PAGE_SIZE if total_groups else 1
+        page = max(0, min(page, total_pages - 1))
         page_items = db.get_user_email_requests_paginated(target_id, page, PAGE_SIZE)
         lines = []
         for i, r in enumerate(page_items):
@@ -836,11 +888,15 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
         return
 
-    elif data.startswith("rankings_page_"):
+    if data.startswith("rankings_page_"):
         page = int(data.split("_")[-1])
         PAGE_SIZE = 10
         total = db.count_rankings()
+        if total == 0:
+            await query.edit_message_text(t(uid, "rankings_empty"))
+            return
         total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        page = max(0, min(page, total_pages - 1))
         data_rows = db.get_user_rankings_paginated(page, PAGE_SIZE)
         top = db.get_top_ranked_user()
         lines = []
@@ -865,12 +921,13 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
         return
 
-    elif data.startswith("users_page_"):
+    if data.startswith("users_page_"):
         page = int(data.split("_")[-1])
         PAGE_SIZE = 10
         users = db.list_users_paginated(page, PAGE_SIZE)
         total = db.count_users()
-        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE if total else 1
+        page = max(0, min(page, total_pages - 1))
         active = db.count_active_users()
         lines = []
         for i, u in enumerate(users):
@@ -885,6 +942,7 @@ async def pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             buttons.append(InlineKeyboardButton(t(uid, "btn_next"), callback_data=f"users_page_{page + 1}"))
         keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        return
 
 
 # ─────────────────────────────────────────────
