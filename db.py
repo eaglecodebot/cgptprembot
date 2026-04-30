@@ -54,23 +54,16 @@ class Database:
         self.users.create_index("telegram_id", unique=True)
         self.users.create_index("last_seen")
         self.users.create_index("blocked")
-        self.users.create_index([("_id", -1)])
-
         self.emails.create_index("email", unique=True)
         try:
-            # Match the actual sort used by list_emails_paginated().
-            self.emails.create_index([("created_at", -1)])
+            self.emails.create_index("created_at")
         except OperationFailure as e:
-            # Ignore conflict if an older TTL/index definition already exists.
+            # Ignore conflict if an older TTL index already exists on created_at
             if getattr(e, "code", None) != 85:
                 raise
-
         self.admins.create_index("telegram_id", unique=True)
-
-        # These indexes support request logs/rankings and reduce aggregation work.
         self.db["code_requests"].create_index([("telegram_id", 1), ("requested_at", -1)])
-        self.db["code_requests"].create_index([("telegram_id", 1), ("email", 1), ("requested_at", -1)])
-        self.db["code_requests"].create_index([("telegram_id", 1), ("username", 1)])
+        self.db["code_requests"].create_index([("telegram_id", 1), ("email", 1)])
 
     # ─────────────────────────────────────────────
     # Admin helpers
@@ -176,8 +169,8 @@ class Database:
         return list(
             self.users.find({}, {"_id": 0})
             .sort("_id", -1)
-            .skip(page * page_size)
             .limit(page_size)
+            .skip(page * page_size)
         )
 
     def count_users(self) -> int:
